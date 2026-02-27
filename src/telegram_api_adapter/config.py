@@ -17,6 +17,31 @@ class Settings:
 
     telegram_bot_token: str
     api_url: str
+    telegram_proxy_url: str | None
+    telegram_read_timeout_s: float
+    telegram_write_timeout_s: float
+    telegram_connect_timeout_s: float
+    telegram_pool_timeout_s: float
+
+
+def _get_env_float(name: str, default: float) -> float:
+    """Lê uma variável de ambiente numérica (float) com fallback.
+
+    Args:
+        name: Nome da variável.
+        default: Valor padrão se ausente/inválida.
+
+    Returns:
+        O valor convertido para float, ou `default`.
+    """
+
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
 
 def _parse_env_line(line: str) -> tuple[str, str] | None:
@@ -97,4 +122,20 @@ def load_settings() -> Settings:
     if not api_url:
         raise RuntimeError("API_URL não configurada. Preencha o arquivo .env ou exporte a variável de ambiente.")
 
-    return Settings(telegram_bot_token=token, api_url=api_url)
+    telegram_proxy_url = os.getenv("TELEGRAM_PROXY_URL", "").strip() or None
+
+    # Timeouts do Bot API (úteis em redes lentas/restritas)
+    telegram_read_timeout_s = _get_env_float("TELEGRAM_READ_TIMEOUT_S", 20.0)
+    telegram_write_timeout_s = _get_env_float("TELEGRAM_WRITE_TIMEOUT_S", 20.0)
+    telegram_connect_timeout_s = _get_env_float("TELEGRAM_CONNECT_TIMEOUT_S", 20.0)
+    telegram_pool_timeout_s = _get_env_float("TELEGRAM_POOL_TIMEOUT_S", 10.0)
+
+    return Settings(
+        telegram_bot_token=token,
+        api_url=api_url,
+        telegram_proxy_url=telegram_proxy_url,
+        telegram_read_timeout_s=telegram_read_timeout_s,
+        telegram_write_timeout_s=telegram_write_timeout_s,
+        telegram_connect_timeout_s=telegram_connect_timeout_s,
+        telegram_pool_timeout_s=telegram_pool_timeout_s,
+    )

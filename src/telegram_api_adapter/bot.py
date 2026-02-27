@@ -6,14 +6,19 @@ A ideia é manter este módulo pequeno e delegar integrações para adapters em 
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
 from telegram.constants import ChatType
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.request import HTTPXRequest
 
 from telegram_api_adapter.config import Settings
+
+
+logger = logging.getLogger("telegram_api_adapter")
 
 
 def _is_private_message(update: Update) -> bool:
@@ -115,6 +120,7 @@ async def _send_service_unavailable(update: Update, context: ContextTypes.DEFAUL
     if update.effective_chat is None:
         return
 
+    logger.warning("Falha ao chamar API; enviando fallback no chat_id=%s", update.effective_chat.id)
     await context.bot.send_message(chat_id=str(update.effective_chat.id), text="Serviço indisponível")
 
 
@@ -162,11 +168,25 @@ async def _handle_private_message(update: Update, context: ContextTypes.DEFAULT_
     settings: Settings = context.application.bot_data["settings"]
     payload = _normalize_update(update, start_payload=start_payload)
 
+    logger.info(
+        "Recebido update privado (chat_id=%s user_id=%s message_id=%s start_payload=%s)",
+        payload.get("tg_chat_id"),
+        payload.get("tg_user_id"),
+        payload.get("message_id"),
+        payload.get("start_payload"),
+    )
+
     try:
         api_response = await _post_to_api(settings.api_url, payload)
     except (httpx.RequestError, httpx.HTTPStatusError, ValueError):
         await _send_service_unavailable(update, context)
         return
+
+    logger.info(
+        "Resposta da API recebida (acao=%s tg_chat_id=%s)",
+        api_response.get("acao"),
+        api_response.get("tg_chat_id"),
+    )
 
     action = api_response.get("acao")
     if action != "responder":
@@ -223,7 +243,33 @@ def build_application(settings: Settings) -> Application:
         Instância de `Application` pronta para executar.
     """
 
-    application = Application.builder().token(settings.telegram_bot_token).build()
+    request = HTTPXRequest(
+        proxy_url=settings.telegram_proxy_url,
+        read_timeout=settings.telegram_read_timeout_s,
+        write_timeout=settings.telegram_write_timeout_s,
+        connect_timeout=settings.telegram_connect_timeout_s,
+        pool_timeout=settings.telegram_pool_timeout_s,
+    )
+
+    async def _post_init(application: Application) -> None:
+        """Loga quando a Application termina a inicialização.
+
+        Este callback ajuda a diferenciar "processo rodando" de "travado".
+
+        Args:
+            application: Instância inicializada.
+        """
+
+        me = application.bot
+        logger.info("Bot inicializado e pronto para receber mensagens.")
+
+    application = (
+        Application.builder()
+        .token(settings.telegram_bot_token)
+        .request(request)
+        .post_init(_post_init)
+        .build()
+    )
 
     application.bot_data["settings"] = settings
 
